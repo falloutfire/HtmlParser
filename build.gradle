@@ -1,10 +1,13 @@
-apply plugin: 'maven'
+//apply plugin: 'maven'
+apply plugin: 'maven-publish'
 apply plugin: 'signing'
 apply plugin: 'java'
 
 group 'com.github.falloutfire'
 archivesBaseName = "htmlparser"
-version '0.1-SNAPSHOT'
+version '0.2.2'
+
+sourceCompatibility = 1.8
 
 repositories {
     mavenCentral()
@@ -15,10 +18,15 @@ dependencies {
     testCompile group: 'junit', name: 'junit', version: '4.12'
 }
 
-/*task javadocJar(type: Jar, dependsOn: javadoc) {
+test {
+    // show standard out and standard error of the test JVM(s) on the console
+    testLogging.showStandardStreams = true
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
     classifier = 'javadoc'
     from 'build/docs/javadoc'
-}*/
+}
 
 task sourcesJar(type: Jar) {
     from sourceSets.main.allSource
@@ -26,54 +34,122 @@ task sourcesJar(type: Jar) {
 }
 
 artifacts {
+    //archives jar
     archives sourcesJar
+    archives javadocJar
 }
 
 signing {
     sign configurations.archives
 }
 
-uploadArchives {
-    repositories {
-        mavenDeployer {
-            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            customizePom(pom)
+            groupId 'com.github.falloutfire'
+            artifactId 'htmlparser'
+            version '0.2.2'
 
-            // Destination
-            repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
-                authentication(userName: "falloutfire", password: "Y5qnxCwsQ-k!gpX")
-            }
-            snapshotRepository(url: "https://oss.sonatype.org/content/repositories/snapshots/") {
-                authentication(userName: "falloutfire", password: "Y5qnxCwsQ-k!gpX")
-            }
+            from components.java
 
-            pom.project {
-                name 'htmlparser'
-                packaging 'jar'
-                // optionally artifactId can be defined here
-                description 'Easy parsin html'
-                url 'https://github.com/falloutfire/HtmlParser'
-
-                scm {
-                    connection 'scm:git://github.com/falloutfire/HtmlParser.git'
-                    developerConnection 'scm:git:ssh://github.com/falloutfire/HtmlParser.git'
-                    url 'https://github.com/falloutfire/JHtmlParser'
+            // create the sign pom artifact
+            pom.withXml {
+                def pomFile = file("${project.buildDir}/generated-pom.xml")
+                writeTo(pomFile)
+                def pomAscFile = signing.sign(pomFile).signatureFiles[0]
+                artifact(pomAscFile) {
+                    classifier = null
+                    extension = 'pom.asc'
                 }
+            }
 
-                licenses {
-                    license {
-                        name 'The Apache License, Version 2.0'
-                        url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                    }
-                }
+            artifact(sourcesJar) {
+                classifier = 'sources'
+            }
+            artifact(javadocJar) {
+                classifier = 'javadoc'
+            }
 
-                developers {
-                    developer {
-                        id 'falloutfire'
-                        name 'Ilya Man'
+            // create the signed artifacts
+            project.tasks.signArchives.signatureFiles.each {
+                artifact(it) {
+                    def matcher = it.file =~ /-(sources|javadoc)\.jar\.asc$/
+                    if (matcher.find()) {
+                        classifier = matcher.group(1)
+                    } else {
+                        classifier = null
                     }
+                    extension = 'jar.asc'
                 }
             }
         }
+    }
+    repositories {
+        maven {
+            url "https://oss.sonatype.org/service/local/staging/deploy/maven2"
+            credentials {
+                username sonatypeUsername
+                password sonatypePassword
+            }
+        }
+    }
+}
+
+def customizePom(pom) {
+    pom.withXml {
+        def root = asNode()
+
+        // eliminate test-scoped dependencies (no need in maven central POMs)
+        root.dependencies.removeAll { dep ->
+            dep.scope == "test"
+        }
+
+        // add all items necessary for maven central publication
+        root.children().last() + {
+            resolveStrategy = Closure.DELEGATE_FIRST
+
+            description 'Getting article from html page'
+            name 'htmlparser'
+            url 'https://github.com/falloutfire/HtmlParser'
+            organization {
+                name 'com.github.falloutfire'
+                url 'https://github.com/falloutfire'
+            }
+            issueManagement {
+                system 'GitHub'
+                url 'https://github.com/falloutfire/HtmlParser/issues'
+            }
+            licenses {
+                license {
+                    name 'The Apache License, Version 2.0'
+                    url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                }
+            }
+            scm {
+                connection 'scm:git:https://github.com/falloutfire/HtmlParser.git'
+                developerConnection 'scm:git:git@github.com/falloutfire/HtmlParser.git'
+                url 'https://github.com/falloutfire/HtmlParser'
+            }
+            developers {
+                developer {
+                    id 'falloutfire'
+                    name 'Ilya Man'
+                }
+            }
+        }
+    }
+}
+
+model {
+    tasks.generatePomFileForMavenJavaPublication {
+        destination = file("$buildDir/generated-pom.xml")
+    }
+    tasks.publishMavenJavaPublicationToMavenLocal {
+        dependsOn project.tasks.signArchives
+    }
+    tasks.publishMavenJavaPublicationToMavenRepository {
+        dependsOn project.tasks.signArchives
     }
 }
 
